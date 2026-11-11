@@ -1,249 +1,140 @@
-# Assignment 2 – Big Data: Dense and Sparse Matrix Multiplication
+# Assignment 3 — Parallel Matrix Multiplication
 
-## 1. Project description
+## Project overview
 
-This project studies the performance of dense and sparse matrix multiplication using C.
+This project evaluates the performance of dense matrix multiplication using sequential C code and OpenMP parallelisation.
 
-It compares three algorithms for dense matrix multiplication:
+The study compares execution time, speedup, parallel efficiency and memory consumption across different matrix sizes and thread counts.
 
-- `ijk`: traditional row-column multiplication.
-- `ikj`: loop reordering to improve memory access.
-- `blocked`: blocked matrix multiplication using cache-friendly submatrices.
+The multiplication algorithm is IKJ in both implementations. Matrices use row-major storage and double-precision floating-point values.
 
-It also compares dense matrix multiplication with sparse matrix multiplication using the Compressed Sparse Row (CSR) format.
-
-The experiments measure execution time, memory usage, matrix density and CSR conversion overhead.
-
-## 2. Project structure
+## Project structure
 
 ```text
-Assignment2_BigData/
-│
+IA3/
 ├── src/
 │   └── c/
-│       ├── dense.c
-│       └── sparse.c
-│
-├── scripts/
-│   ├── generate_data.py
-│   ├── plot_results.py
-│   └── run_benchmarks.py
-│
+│       ├── parallel.c
+│       ├── parallel.exe
+│       ├── test_openmp.c
+│       └── test_openmp.exe
 ├── results/
-│   ├── dense_results.csv
-│   ├── sparse_results.csv
-│   ├── generation_config.json
-│   ├── dense_times.png
-│   ├── sparse_times.png
-│   └── dense_vs_csr.png
-│
-├── report.md
+│   └── assignment3/
+│       ├── parallel_results.csv
+│       └── summary_results.csv
+├── plots/
+│   ├── execution_time_512.png
+│   ├── execution_time_1024.png
+│   ├── execution_time_2048.png
+│   ├── speedup_512.png
+│   ├── speedup_1024.png
+│   ├── speedup_2048.png
+│   ├── efficiency_512.png
+│   ├── efficiency_1024.png
+│   └── efficiency_2048.png
+├── report/
+│   └── report.md
+├── generate_plots.py
+├── generate_summary.py
 └── README.md
 ```
 
-## 3. Requirements
+## Hardware and software
 
-### C compiler
-- GCC (MinGW.org GCC-6.3.0-1).
+The experiments were performed on:
 
-### Python
-- Python 3.14.2
-- pandas 2.3.3
-- matplotlib 3.10.8
+- CPU: 12th Gen Intel Core i5-12450H.
+- Physical cores: 8.
+- Logical processors: 12.
+- RAM: 15.73 GB.
+- Operating system: Windows.
+- Compiler: GCC 16.2.0 (MSYS2 UCRT64).
+- Parallelisation framework: OpenMP.
+- Python: 3.14.2.
+- Matplotlib: 3.10.8.
 
-## 4. Compilation
+## Dependencies
 
-From the project root directory, compile the C programs using:
+Install MSYS2 with the UCRT64 GCC toolchain and OpenMP support.
 
-**Dense multiplication:**
+Python dependencies can be installed with:
 
-```bash
-gcc -std=c11 -O2 -Wall -Wextra src/c/dense.c -o src/c/dense.exe -lm -lpsapi
+```powershell
+python -m pip install matplotlib==3.10.8
 ```
 
-**Sparse multiplication:**
+The C program also uses the Windows Process Status API to measure peak working set.
 
-```bash
-gcc -std=c11 -O2 -Wall -Wextra src/c/sparse.c -o src/c/sparse.exe -lm -lpsapi
+## Compilation
+
+Open PowerShell in the project root directory and configure the compiler path:
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 ```
 
-## 5. Running the experiments
+Compile the parallel matrix multiplication program:
 
-The complete benchmark suite can be executed with:
-
-```bash
-python scripts/run_benchmarks.py
+```powershell
+gcc -O2 -std=c11 -Wall -Wextra -fopenmp .\src\c\parallel.c -o .\src\c\parallel.exe -lpsapi -lm
 ```
 
-The script runs the following experiments:
+## Running the benchmarks
 
-### Dense matrix multiplication
+Run the program with the desired square matrix dimension:
 
-- Matrix sizes: 256, 512, 1024 and 2048.
-- Algorithms: `ijk`, `ikj` and `blocked`.
-- One warm-up repetition.
-- Three measured repetitions per configuration.
-
-### Sparse matrix multiplication
-
-- Matrix sizes: 256, 512 and 1024.
-- Target zero percentages: 50%, 70%, 90% and 95%.
-- Comparison between dense multiplication and CSR multiplication.
-- One warm-up repetition.
-- Three measured repetitions per configuration.
-
-The benchmark runner checks the existing CSV files and skips configurations that have already been recorded. This allows the experiment suite to resume without intentionally repeating completed configurations.
-
-**Important:** The C programs append results to their CSV files. If they are executed manually for a configuration that is already present, duplicate rows may be added. Back up or clean the corresponding CSV before manually repeating an experiment.
-
-## 6. Data generation and configuration
-
-The script:
-
-```bash
-python scripts/generate_data.py
+```powershell
+.\src\c\parallel.exe 512
+.\src\c\parallel.exe 1024
+.\src\c\parallel.exe 2048
 ```
 
-creates `results/generation_config.json`, which documents the experimental configuration.
+The program generates deterministic input matrices using a fixed random seed. Each configuration performs one warm-up execution and seven measured repetitions.
 
-The configuration includes:
+The tested thread counts are 1, 2, 4, 6, 8, 10 and 12.
 
-- Random seed: `123456789`.
-- Numeric type: `double`.
-- Number of workers: 1.
-- Warm-up repetitions: 1.
-- Measured repetitions: 3.
-- Dense matrix sizes and algorithms.
-- Sparse matrix sizes and target zero percentages.
-- CSR storage format.
-
-The actual matrices are generated by the C programs. The zero percentages used for sparse matrices are probabilistic targets, so the actual density may differ slightly. The measured number of non-zero elements (`nnz`) and actual density are recorded in the results.
-
-## 7. Results and visualizations
-
-The benchmark results are stored in CSV files in the `results/` directory.
-
-### 7.1 Dense multiplication
-
-The following table shows the median execution time in seconds for each algorithm, calculated from three measured repetitions.
-
-| Matrix size | ijk (s) | ikj (s) | blocked (s) |
-|---:|---:|---:|---:|
-| 256 | 0.011277 | 0.007134 | 0.006841 |
-| 512 | 0.398556 | 0.054901 | 0.053830 |
-| 1024 | 4.037054 | 0.520242 | 0.449929 |
-| 2048 | 111.137877 | 4.753414 | 3.778137 |
-
-The results show that loop reordering and blocking substantially reduce execution time compared with the traditional `ijk` implementation, particularly for larger matrices.
-
-The blocked implementation obtains the lowest median execution time in these experiments.
-
-### 7.2 Sparse multiplication
-
-Sparse multiplication is evaluated using both dense and CSR representations.
-
-For a matrix of size 1024 with a target of 95% zeros, the measured results are:
-
-| Metric | Result |
-|---|---:|
-| Actual zero percentage | 95.02% |
-| Non-zero elements (nnz) | 52,261 |
-| Dense multiplication time | 0.522942 s |
-| CSR multiplication time | 0.025395 s |
-| CSR conversion time | 0.003327 s |
-| CSR time including conversion | 0.028722 s |
-
-The CSR representation reduces multiplication time considerably for highly sparse matrices. The conversion time is measured separately and should be considered when evaluating the total cost of using CSR.
-
-### 7.3 Generated plots
-
-The following visualizations are generated by `plot_results.py`:
-
-- `dense_times.png`: execution time comparison between the dense algorithms.
-- `sparse_times.png`: dense versus CSR execution time across different sparsity levels.
-- `dense_vs_csr.png`: comparison between dense and CSR multiplication for the selected matrix size.
-
-To regenerate the plots:
-
-```bash
-python scripts/plot_results.py
-```
-
-This script reads the CSV files and generates the PNG images. It does not execute benchmarks or modify the CSV data.
-
-## 8. CSV file formats
-
-### 8.1 Dense results
-
-`dense_results.csv` contains one row per measured repetition.
-
-Columns:
+Benchmark measurements are written to:
 
 ```text
-size,
-method,
-repetition,
-time_seconds,
-peak_working_set_bytes,
-numeric_type,
-workers,
-warmup_repetitions,
-measured_repetitions
+results/assignment3/parallel_results.csv
 ```
 
-Each configuration contains three measured timing rows. The median is calculated during analysis and visualization.
+**Important:** the benchmark program writes measurements to the CSV file. To perform a fresh complete experiment, preserve a backup of existing results and start with a clean output file. Do not append a second set of repetitions to the existing dataset used by the analysis scripts.
 
-### 8.2 Sparse results
+## Generating the summary table
 
-`sparse_results.csv` contains one row per matrix size and target zero percentage. The timing values represent the median of the three measured repetitions.
+Run:
 
-Columns:
+```powershell
+python .\generate_summary.py
+```
+
+The summary is saved to:
 
 ```text
-size,
-zero_percent,
-nnz,
-density,
-output_nnz,
-output_density,
-conversion_seconds,
-dense_seconds,
-csr_seconds,
-dense_storage_bytes,
-csr_storage_bytes,
-peak_working_set_bytes,
-numeric_type,
-workers,
-warmup_repetitions,
-measured_repetitions
+results/assignment3/summary_results.csv
 ```
 
-The CSV records both input and output sparsity information, storage requirements and execution metadata.
+## Generating the plots
 
-## 9. Experimental methodology and reproducibility
+Run:
 
-The experiments use the following common configuration:
+```powershell
+python .\generate_plots.py
+```
 
-- Numeric type: `double`.
-- Execution model: sequential, single worker.
-- Random seed: `123456789`.
-- Warm-up repetitions: 1.
-- Measured repetitions: 3.
+The nine plots are saved in the `plots/` directory:
 
-For dense multiplication, the three algorithms operate on square matrices.
+- Execution time.
+- Speedup.
+- Parallel efficiency.
 
-For sparse multiplication, matrix A is generated with a specified target zero percentage and then converted to CSR. Matrix B and the output matrix C use dense storage.
+Each metric is plotted separately for the three benchmark matrix sizes.
 
-The CSR conversion time is measured separately from the multiplication time.
+## Reproducibility notes
 
-Before each timed repetition, the output matrix is reset to avoid carrying over values from a previous execution. The implementations also validate their results against a reference computation.
+The program uses the same input matrices for sequential and parallel comparisons, the same numeric type and storage layout, and a fixed random seed.
 
-The reported peak working set is a process-level memory measurement and should not be interpreted as the exact memory consumed exclusively by the matrix data structures.
+The raw CSV contains the measurements used in the report. The Python scripts generate the summary table and plots from that dataset without rerunning the benchmarks.
 
-The dense and sparse implementations use their own random number generation logic. The fixed seed makes each implementation's input generation reproducible, but does not imply that both programs generate identical matrices.
-
-## 10. Detailed report
-
-The file `report.md` contains the detailed analysis of the experimental methodology, results and conclusions.
-
-Additional profiling information, where applicable, is documented separately from the standard benchmark CSV results.
+See `report/report.md` for the experimental methodology, correctness validation, performance analysis, resource measurements and conclusions.
