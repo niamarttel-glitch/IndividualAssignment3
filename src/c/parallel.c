@@ -17,6 +17,12 @@
 #define DEFAULT_SIZE 1024
 #define MAX_CONFIGS 8
 
+#define MEMORY_BUDGET_MIB 256ULL
+#define MEMORY_BUDGET_BYTES \
+    (MEMORY_BUDGET_MIB * 1024ULL * 1024ULL)
+
+#define OUTPUT_CSV "results/assignment3/parallel_results_limited.csv"
+
 typedef struct {
     double median;
     double minimum;
@@ -99,12 +105,29 @@ static void multiply_parallel(const double *A,
     }
 }
 
-/* Compare two matrices using absolute and relative tolerances. */
+/* Independent IJK reference implementation for correctness tests. */
+static void multiply_reference_ijk(const double *A,
+                                   const double *B,
+                                   double *C,
+                                   size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < n; j++) {
+            double sum = 0.0;
+
+            for (size_t k = 0; k < n; k++) {
+                sum += A[i * n + k] * B[k * n + j];
+            }
+
+            C[i * n + j] = sum;
+        }
+    }
+}
+
+/* Compare matrices using absolute and relative tolerances. */
 static int matrices_equal(const double *A,
                           const double *B,
                           size_t n) {
     for (size_t i = 0; i < n * n; i++) {
-        /* Reject NaN and infinite values. */
         if (!isfinite(A[i]) || !isfinite(B[i])) {
             return 0;
         }
@@ -122,8 +145,36 @@ static int matrices_equal(const double *A,
     return 1;
 }
 
-/* Test sequential and parallel multiplication with known results. */
+/* Test known result, identity and zero matrices. */
 static int run_basic_tests(void) {
+    const size_t small_n = 2;
+
+    double A2[4] = {1, 2, 3, 4};
+    double B2[4] = {5, 6, 7, 8};
+    double expected2[4] = {19, 22, 43, 50};
+
+    double reference2[4] = {0};
+    double sequential2[4] = {0};
+    double parallel2[4] = {0};
+
+    int actual_threads = 0;
+
+    omp_set_dynamic(0);
+    omp_set_num_threads(2);
+
+    multiply_reference_ijk(A2, B2, reference2, small_n);
+    multiply_sequential(A2, B2, sequential2, small_n);
+    multiply_parallel(A2, B2, parallel2, small_n, &actual_threads);
+
+    if (!matrices_equal(expected2, reference2, small_n) ||
+        !matrices_equal(expected2, sequential2, small_n) ||
+        !matrices_equal(expected2, parallel2, small_n)) {
+        printf("Basic test FAILED: known 2x2 multiplication.\n");
+        return 0;
+    }
+
+    printf("Basic test PASSED: known 2x2 multiplication.\n");
+
     const size_t n = 3;
 
     double identity[9] = {
@@ -144,12 +195,6 @@ static int run_basic_tests(void) {
     double sequential[9] = {0};
     double parallel[9] = {0};
 
-    int actual_threads = 0;
-
-    omp_set_dynamic(0);
-    omp_set_num_threads(2);
-
-    /* Test 1: Identity multiplied by B must equal B. */
     multiply_sequential(identity, B, sequential, n);
     multiply_parallel(identity, B, parallel, n, &actual_threads);
 
@@ -159,7 +204,6 @@ static int run_basic_tests(void) {
         return 0;
     }
 
-    /* Test 2: Zero multiplied by B must produce zero. */
     clear_matrix(sequential, n);
     clear_matrix(parallel, n);
 
@@ -172,7 +216,7 @@ static int run_basic_tests(void) {
         return 0;
     }
 
-    printf("Basic tests: identity and zero matrices PASSED.\n");
+    printf("Basic tests PASSED: known result, identity and zero.\n");
     return 1;
 }
 
@@ -225,11 +269,9 @@ static void benchmark_sequential(const double *A,
                                  double *C,
                                  size_t n,
                                  double *times) {
-    /* Warm-up execution. */
     clear_matrix(C, n);
     multiply_sequential(A, B, C, n);
 
-    /* Measured executions. */
     for (int r = 0; r < REPETITIONS; r++) {
         clear_matrix(C, n);
 
@@ -252,7 +294,6 @@ static int benchmark_parallel(const double *A,
 
     omp_set_num_threads(requested_threads);
 
-    /* Warm-up execution. */
     clear_matrix(C, n);
     multiply_parallel(A, B, C, n, &actual_threads);
 
@@ -263,7 +304,6 @@ static int benchmark_parallel(const double *A,
         return 0;
     }
 
-    /* Measured executions. */
     for (int r = 0; r < REPETITIONS; r++) {
         clear_matrix(C, n);
 
@@ -273,7 +313,6 @@ static int benchmark_parallel(const double *A,
         multiply_parallel(A, B, C, n, &run_threads);
         double end = omp_get_wtime();
 
-        /* Ensure the number of threads remains constant. */
         if (run_threads != expected_threads) {
             fprintf(stderr,
                     "Thread count changed: expected %d, got %d.\n",
@@ -300,7 +339,7 @@ static size_t get_peak_memory_bytes(void) {
     return 0;
 }
 
-/* Save experimental results without overwriting previous runs. */
+/* Save results to a separate CSV for the limited experiment. */
 static int save_results(
     size_t n,
     const int *thread_configs,
@@ -310,15 +349,13 @@ static int save_results(
     double sequential_median,
     size_t peak_memory) {
 
-    FILE *file = fopen(
-        "results/assignment3/parallel_results.csv", "a+");
+    FILE *file = fopen(OUTPUT_CSV, "a+");
 
     if (file == NULL) {
-        perror("Could not open CSV results file");
+        perror("Could not open limited results CSV");
         return 0;
     }
 
-    /* Write CSV header only if the file is empty. */
     if (fseek(file, 0, SEEK_END) != 0) {
         fclose(file);
         return 0;
@@ -375,7 +412,6 @@ static int save_results(
 }
 
 int main(int argc, char *argv[]) {
-    /* Run basic correctness tests before benchmarking. */
     if (!run_basic_tests()) {
         return EXIT_FAILURE;
     }
@@ -396,7 +432,6 @@ int main(int argc, char *argv[]) {
             parsed == 0 ||
             parsed > SIZE_MAX ||
             parsed > LLONG_MAX) {
-
             fprintf(stderr, "Invalid matrix size.\n");
             return EXIT_FAILURE;
         }
@@ -404,17 +439,31 @@ int main(int argc, char *argv[]) {
         n = (size_t)parsed;
     }
 
-    /*
-       First entry is the sequential baseline.
-       Second entry is parallel execution with one thread.
-    */
+    /* Check overflow and theoretical memory requirement.
+       Four double matrices are allocated: A, B, C and reference. */
+    if (n > SIZE_MAX / n ||
+        n * n > SIZE_MAX / (4 * sizeof(double))) {
+        fprintf(stderr, "Matrix size exceeds safe allocation limits.\n");
+        return EXIT_FAILURE;
+    }
+
+    size_t required_memory = 4 * n * n * sizeof(double);
+
+    if (required_memory > MEMORY_BUDGET_BYTES) {
+        fprintf(stderr,
+                "Memory budget exceeded before allocation.\n"
+                "Theoretical matrix memory: %.2f MiB\n"
+                "Allowed matrix memory: %llu MiB\n",
+                (double)required_memory / (1024.0 * 1024.0),
+                MEMORY_BUDGET_MIB);
+        return EXIT_FAILURE;
+    }
+
     const int thread_configs[MAX_CONFIGS] =
         {1, 1, 2, 4, 6, 8, 10, 12};
 
     int actual_configs[MAX_CONFIGS] = {0};
-
     double times[MAX_CONFIGS][REPETITIONS] = {{0}};
-
     Statistics stats[MAX_CONFIGS];
 
     omp_set_dynamic(0);
@@ -430,6 +479,10 @@ int main(int argc, char *argv[]) {
     printf("OpenMP dynamic teams: disabled\n");
     printf("Warm-up executions: 1\n");
     printf("Measured repetitions: %d\n", REPETITIONS);
+    printf("Memory budget: %llu MiB Peak Working Set\n",
+           MEMORY_BUDGET_MIB);
+    printf("Theoretical memory for four matrices: %.2f MiB\n",
+           (double)required_memory / (1024.0 * 1024.0));
 
     /* Allocate matrices. */
     double *A = allocate_matrix(n);
@@ -457,7 +510,6 @@ int main(int argc, char *argv[]) {
 
     /* Calculate sequential reference result. */
     printf("\nGenerating sequential reference...\n");
-
     multiply_sequential(A, B, reference, n);
 
     /* Sequential benchmark. */
@@ -481,7 +533,6 @@ int main(int argc, char *argv[]) {
 
     printf("Sequential median: %.6f seconds\n",
            stats[0].median);
-
     printf("Sequential validation: OK\n");
 
     /* Parallel benchmarks. */
@@ -494,7 +545,6 @@ int main(int argc, char *argv[]) {
             benchmark_parallel(A, B, C, n, requested,
                                times[config]);
 
-        /* Stop if the benchmark or thread consistency check failed. */
         if (actual_configs[config] <= 0) {
             fprintf(stderr,
                     "Parallel benchmark failed for %d requested threads.\n",
@@ -508,10 +558,8 @@ int main(int argc, char *argv[]) {
             return EXIT_FAILURE;
         }
 
-        stats[config] =
-            calculate_statistics(times[config]);
+        stats[config] = calculate_statistics(times[config]);
 
-        /* Validate the final parallel result. */
         if (!matrices_equal(reference, C, n)) {
             fprintf(stderr,
                     "Validation FAILED with %d threads.\n",
@@ -532,25 +580,31 @@ int main(int argc, char *argv[]) {
             speedup / (double)actual_configs[config];
 
         printf("\nRequested threads: %d\n", requested);
-        printf("Actual threads: %d\n",
-               actual_configs[config]);
-
+        printf("Actual threads: %d\n", actual_configs[config]);
         printf("Median time: %.6f seconds\n",
                stats[config].median);
-
         printf("Standard deviation: %.6f seconds\n",
                stats[config].stddev);
-
         printf("Speedup: %.3fx\n", speedup);
-
-        printf("Efficiency: %.2f%%\n",
-               efficiency * 100.0);
-
+        printf("Efficiency: %.2f%%\n", efficiency * 100.0);
         printf("Validation: OK\n");
     }
 
-    /* Retrieve peak memory. */
+    /* Retrieve peak memory for the complete process. */
     size_t peak_memory = get_peak_memory_bytes();
+
+    if (peak_memory == 0) {
+        fprintf(stderr,
+                "Could not retrieve Peak Working Set. "
+                "Results will not be saved.\n");
+
+        free(A);
+        free(B);
+        free(C);
+        free(reference);
+
+        return EXIT_FAILURE;
+    }
 
     printf("\n========================================\n");
     printf(" EXPERIMENT SUMMARY\n");
@@ -562,15 +616,12 @@ int main(int argc, char *argv[]) {
     printf("Peak working set: %.2f MiB\n",
            (double)peak_memory / (1024.0 * 1024.0));
 
-    /* Append experimental results to CSV. */
-    if (!save_results(n,
-                      thread_configs,
-                      actual_configs,
-                      times,
-                      stats,
-                      stats[0].median,
-                      peak_memory)) {
-        fprintf(stderr, "Could not save CSV results.\n");
+    printf("Memory budget: %llu MiB\n", MEMORY_BUDGET_MIB);
+
+    /* Reject the complete run if the process exceeded the budget. */
+    if ((unsigned long long)peak_memory > MEMORY_BUDGET_BYTES) {
+        fprintf(stderr,
+                "\nMEMORY BUDGET EXCEEDED. Results will NOT be saved.\n");
 
         free(A);
         free(B);
@@ -580,9 +631,28 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    printf("Results saved to results/assignment3/parallel_results.csv\n");
+    printf("Memory budget check: PASSED\n");
 
-    /* Release allocated memory. */
+    /* Append results only after all checks have passed. */
+    if (!save_results(n,
+                      thread_configs,
+                      actual_configs,
+                      times,
+                      stats,
+                      stats[0].median,
+                      peak_memory)) {
+        fprintf(stderr, "Could not save limited CSV results.\n");
+
+        free(A);
+        free(B);
+        free(C);
+        free(reference);
+
+        return EXIT_FAILURE;
+    }
+
+    printf("Results saved to: %s\n", OUTPUT_CSV);
+
     free(A);
     free(B);
     free(C);

@@ -1,76 +1,79 @@
 
 import csv
+import statistics
+from collections import defaultdict
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-CSV_FILE = BASE_DIR / "results" / "assignment3" / "parallel_results.csv"
-OUTPUT_FILE = BASE_DIR / "results" / "assignment3" / "summary_results.csv"
+INPUT_FILE = BASE_DIR / "results" / "assignment3" / "parallel_results_limited.csv"
+OUTPUT_FILE = BASE_DIR / "results" / "assignment3" / "summary_results_limited.csv"
 
-with CSV_FILE.open("r", newline="", encoding="utf-8-sig") as file:
-    rows = list(csv.DictReader(file))
+groups = defaultdict(list)
 
-groups = {}
+with INPUT_FILE.open("r", newline="", encoding="utf-8-sig") as file:
+    reader = csv.DictReader(file)
+    for row in reader:
+        key = (int(row["size"]), row["method"], int(row["requested_threads"]))
+        groups[key].append(float(row["time_seconds"]))
 
-for row in rows:
-    key = (int(row["size"]), row["method"], int(row["requested_threads"]))
-    groups.setdefault(key, []).append(row)
+sizes = sorted({key[0] for key in groups})
+results = []
 
-summary = []
-
-for size in sorted({key[0] for key in groups}):
+for size in sizes:
     seq_key = (size, "sequential_ikj", 1)
-    seq_rows = groups[seq_key]
+    if seq_key not in groups:
+        raise ValueError(f"Missing sequential baseline for size {size}")
 
-    sequential_time = float(seq_rows[0]["median_seconds"])
-    best = None
+    seq_times = groups[seq_key]
+    if len(seq_times) != 7:
+        raise ValueError(f"Expected 7 sequential repetitions for size {size}")
 
-    for threads in [1, 2, 4, 6, 8, 10, 12]:
-        key = (size, "parallel_ikj", threads)
-        config_rows = groups[key]
+    sequential_median = statistics.median(seq_times)
+    candidates = []
 
-        parallel_time = float(config_rows[0]["median_seconds"])
-        speedup = sequential_time / parallel_time
-        efficiency = speedup / threads * 100
+    for key, times in groups.items():
+        if key[0] != size or key[1] != "parallel_ikj":
+            continue
+        if len(times) != 7:
+            raise ValueError(f"Expected 7 repetitions for {key}")
 
-        if best is None or parallel_time < best["parallel_time"]:
-            best = {
-                "threads": threads,
-                "parallel_time": parallel_time,
-                "speedup": speedup,
-                "efficiency": efficiency,
-                "stddev": float(config_rows[0]["stddev_seconds"]),
-                "actual_threads": int(config_rows[0]["actual_threads"]),
-                "peak_memory": int(config_rows[0]["peak_working_set_bytes"])
-            }
+        threads = key[2]
+        median_time = statistics.median(times)
+        speedup = sequential_median / median_time
+        efficiency = speedup / threads
 
-    summary.append({
+        candidates.append({
+            "size": size,
+            "threads": threads,
+            "median_seconds": median_time,
+            "stddev_seconds": statistics.pstdev(times),
+            "speedup": speedup,
+            "efficiency": efficiency,
+        })
+
+    best = min(candidates, key=lambda item: item["median_seconds"])
+
+    results.append({
         "size": size,
-        "sequential_time_seconds": sequential_time,
+        "sequential_median_seconds": sequential_median,
         "best_threads": best["threads"],
-        "best_parallel_time_seconds": best["parallel_time"],
-        "best_speedup": best["speedup"],
-        "best_efficiency_percent": best["efficiency"],
-        "best_stddev_seconds": best["stddev"],
-        "actual_threads": best["actual_threads"],
-        "peak_working_set_mib": best["peak_memory"] / (1024 * 1024)
+        "best_parallel_median_seconds": best["median_seconds"],
+        "speedup": best["speedup"],
+        "efficiency": best["efficiency"],
+        "parallel_stddev_seconds": best["stddev_seconds"],
     })
 
 with OUTPUT_FILE.open("w", newline="", encoding="utf-8") as file:
-    writer = csv.DictWriter(file, fieldnames=summary[0].keys())
+    writer = csv.DictWriter(file, fieldnames=results[0].keys())
     writer.writeheader()
-    writer.writerows(summary)
+    writer.writerows(results)
 
-print("SUMMARY RESULTS")
-print("-" * 85)
-
-for item in summary:
+print(f"Summary saved to: {OUTPUT_FILE}")
+for row in results:
     print(
-        f'{item["size"]:4} x {item["size"]:4} | '
-        f'Sequential: {item["sequential_time_seconds"]:.3f} s | '
-        f'Best: {item["best_threads"]:2} threads | '
-        f'Parallel: {item["best_parallel_time_seconds"]:.3f} s | '
-        f'Speedup: {item["best_speedup"]:.3f}x | '
-        f'Efficiency: {item["best_efficiency_percent"]:.2f}%'
+        f"Size {row['size']}: "
+        f"{row['best_threads']} threads, "
+        f"{row['best_parallel_median_seconds']:.6f} s, "
+        f"speedup {row['speedup']:.3f}x, "
+        f"efficiency {row['efficiency'] * 100:.2f}%"
     )
-
-print(f"\nSummary saved to: {OUTPUT_FILE}")
